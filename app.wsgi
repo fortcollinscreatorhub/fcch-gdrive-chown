@@ -99,16 +99,6 @@ def index():
   logged_in = 'credentials' in flask.session
   return flask.render_template('index.html', prefix=url_for(''), logged_in=logged_in)
 
-@app.route('/test')
-def test():
-  if 'val' not in flask.session:
-    val = -1
-  else:
-    val = int(flask.session['val'])
-  val = val + 1
-  flask.session['val'] = str(val)
-  return js_response(val);
-
 @app.route('/login')
 def login():
   try:

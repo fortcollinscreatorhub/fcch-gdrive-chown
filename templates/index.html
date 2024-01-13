@@ -5,16 +5,15 @@
 </head>
 <body>
     <div>
-        <button onClick="onClickTest()">Test</button> |
         {% if not logged_in %}
-        <button onClick="onClickLogin()">Login</button>
+        <button onClick="onClickLogin()" style="background-color: lightgreen">Login</button>
         {% else %}
         <button onClick="onClickLogout()">Logout</button> |
-        <button onClick="onClickGetDriveFileList()">Get Drive File List</button> |
+        <button onClick="onClickGetDriveFileList()" style="background-color: lightgreen">Get Drive File List</button> |
         <button onClick="onClickShowDriveFileList()">Show Drive File List</button> |
-        <button onClick="onClickCalcFilesToChangeOwnership()">Calculate Files To Change Ownership</button> |
+        <button onClick="onClickCalcFilesToChangeOwnership()" style="background-color: lightgreen">Calculate Files To Change Ownership</button> |
         <button onClick="onClickShowFilesToChangeOwnership()">Show Files To Change Ownership</button> |
-        <button onClick="onClickChangeOwnership()">Change Ownership</button>
+        <button onClick="onClickChangeOwnership()" style="background-color: lightgreen">Change Ownership</button>
         {% endif %}
     </div>
     <hr>
