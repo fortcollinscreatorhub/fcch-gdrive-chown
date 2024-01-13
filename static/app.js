@@ -27,7 +27,7 @@ async function invokeAndShowResults(url) {
         return;
     }
 }
-  
+
 function onClickTest() {
     invokeAndShowResults('test');
 }
@@ -57,7 +57,16 @@ async function onClickGetDriveFileList() {
     } while (page_token !== undefined)
 }
 
+function onClickShowDriveFileList() {
+    invokeAndShowResults('show_drive_file_list');
+}
+
 function onClickCalcFilesToChangeOwnership() {
+    invokeAndShowResults('calc_files_to_change_ownership');
+}
+
+function onClickShowFilesToChangeOwnership() {
+    invokeAndShowResults('show_files_to_change_ownership');
 }
 
 function onClickChangeOwnership() {

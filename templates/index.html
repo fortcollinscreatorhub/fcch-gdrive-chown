@@ -11,10 +11,13 @@
         {% else %}
         <button onClick="onClickLogout()">Logout</button> |
         <button onClick="onClickGetDriveFileList()">Get Drive File List</button> |
+        <button onClick="onClickShowDriveFileList()">Show Drive File List</button> |
         <button onClick="onClickCalcFilesToChangeOwnership()">Calculate Files To Change Ownership</button> |
+        <button onClick="onClickShowFilesToChangeOwnership()">Show Files To Change Ownership</button> |
         <button onClick="onClickChangeOwnership()">Change Ownership</button>
         {% endif %}
     </div>
+    <hr>
     <div id="results">
         {% with messages = get_flashed_messages() %}
             {% if messages %}

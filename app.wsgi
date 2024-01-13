@@ -29,10 +29,14 @@ SCOPES = [
 API_SERVICE_NAME = 'drive'
 API_VERSION = 'v2'
 
-STATE_NONE = 'none'
-STATE_LIST_FILES = 'list'
-STATE_BUILD_TREE = 'build_tree'
-STATE_CHOWN = 'chown'
+REACHABLE_UNKNOWN = 0
+REACHABLE_NO = 1
+REACHABLE_YES = 2
+
+DISOWNED_UNKNOWN = 0
+DISOWNED_NO = 1
+DISOWNED_YES = 2
+DISOWNED_DONE = 3
 
 def url_for(path):
   return script_name + '/' + path
@@ -227,23 +231,18 @@ def get_drive_file_list():
     for file in files:
       file_id = file['id']
       file_title = file['title']
-      file_owner = file['owners'][0]['emailAddress']
-      file_reachable = 0
-      file_disowned = 0
-
       file_type = file['mimeType']
       file_is_folder = file_type == 'application/vnd.google-apps.folder'
-      if file_is_folder:
-        file_parents = file['parents']
-      else:
-        file_parents = []
+      file_owner = file['owners'][0]['emailAddress']
+      file_reachable = REACHABLE_UNKNOWN
+      file_disowned = DISOWNED_UNKNOWN
+      file_parents = file['parents']
 
       dbcur.execute("INSERT INTO files (user, id, title, isFolder, owner, reachable, disowned) VALUES (?, ?, ?, ?, ?, ?, ?)",
         (flask.session['email'], file_id, file_title, file_is_folder, file_owner, file_reachable, file_disowned))
-      if file_is_folder:
-        for file_parent in file_parents:
-          dbcur.execute("INSERT INTO fileParents (user, id, parent) VALUES (?, ?, ?)",
-            (flask.session['email'], file_id, file_parent['id']))
+      for file_parent in file_parents:
+        dbcur.execute("INSERT INTO fileParents (user, id, parent) VALUES (?, ?, ?)",
+          (flask.session['email'], file_id, file_parent['id']))
 
     fetched = len(files)
     count += fetched
@@ -270,6 +269,123 @@ def get_drive_file_list():
     data = None
 
   return js_response(msg, data)
+
+@app.route('/show_drive_file_list')
+def show_drive_file_list():
+  try:
+    raise_if_unauth()
+
+    (dbcon, dbcur) = get_db()
+    dbres = dbcur.execute(
+      "SELECT user, id, title, isFolder, owner, reachable, disowned FROM files WHERE user=?",
+      (flask.session['email'], ))
+    files = dbres.fetchall()
+    dbres = dbcur.execute(
+      "SELECT user, id, parent FROM fileParents WHERE user=?",
+      (flask.session['email'], ))
+    file_parents = dbres.fetchall()
+
+    msg = ''
+    msg += 'Files:\n'
+    for file in files:
+      msg += repr(file) + '\n'
+    msg += 'File Parents:\n'
+    for file_parent in file_parents:
+      msg += repr(file_parent) + '\n'
+
+    dbcon.commit()
+  except Exception as e:
+    dbcon.rollback()
+    msg = exc_to_text(e)
+
+  return js_response(msg)
+
+@app.route('/calc_files_to_change_ownership')
+def calc_files_to_change_ownership():
+  try:
+    raise_if_unauth()
+
+    (dbcon, dbcur) = get_db()
+    dbres = dbcur.execute(
+      "SELECT id, isFolder, owner FROM files WHERE user=?",
+      (flask.session['email'], ))
+    files = dbres.fetchall()
+    dbres = dbcur.execute(
+      "SELECT id, parent FROM fileParents WHERE user=?",
+      (flask.session['email'], ))
+    file_parents = dbres.fetchall()
+
+    file_data_of_file_id = {}
+    for file_id, file_is_folder, file_owner in files:
+      file_data_of_file_id[file_id] = (file_is_folder, file_owner)
+
+    child_file_ids_of_parent = {}
+    for file_id, file_parent in file_parents:
+      child_file_ids = child_file_ids_of_parent.get(file_parent, [])
+      child_file_ids.append(file_id)
+      child_file_ids_of_parent[file_parent] = child_file_ids
+
+    reachable_files = []
+    disown_yes_files = []
+    parents_to_do = [fcch_creator_hub_public_folder]
+    parents_done = {}
+
+    while parents_to_do:
+      parent = parents_to_do.pop()
+      child_file_ids = child_file_ids_of_parent.get(parent, [])
+      for file_id in child_file_ids:
+        file_is_folder, file_owner = file_data_of_file_id[file_id]
+        if file_is_folder:
+          if file_id not in parents_done:
+            parents_done[file_id] = True
+            parents_to_do.append(file_id)
+        else:
+          reachable_files.append(file_id)
+        if file_owner == flask.session['email']:
+          disown_yes_files.append(file_id)
+
+    dbcur.execute("UPDATE files SET reachable=? WHERE user=?",
+      (REACHABLE_NO, flask.session['email']))
+
+    rows = [(REACHABLE_YES, flask.session['email'], file_id) for file_id in reachable_files]
+    dbcur.executemany("UPDATE files SET reachable=? WHERE user=? AND id=?", rows)
+
+    dbcur.execute("UPDATE files SET disowned=? WHERE user=?",
+      (DISOWNED_NO, flask.session['email']))
+
+    rows = [(DISOWNED_YES, flask.session['email'], file_id) for file_id in disown_yes_files]
+    dbcur.executemany("UPDATE files SET disowned=? WHERE user=? AND id=?", rows)
+
+    msg = 'Calculation complete'
+
+    dbcon.commit()
+  except Exception as e:
+    dbcon.rollback()
+    msg = exc_to_text(e)
+
+  return js_response(msg)
+
+@app.route('/show_files_to_change_ownership')
+def show_files_to_change_ownership():
+  try:
+    raise_if_unauth()
+
+    (dbcon, dbcur) = get_db()
+    dbres = dbcur.execute(
+      "SELECT user, id, title, isFolder, owner, reachable, disowned FROM files WHERE user=? AND disowned=2",
+      (flask.session['email'], ))
+    files = dbres.fetchall()
+
+    msg = ''
+    for file in files:
+      msg += repr(file) + '\n'
+
+    dbcon.commit()
+  except Exception as e:
+    dbcon.rollback()
+    msg = exc_to_text(e)
+
+  return js_response(msg)
 
 def application(environ, start_response):
   global oauth2callback_uri
