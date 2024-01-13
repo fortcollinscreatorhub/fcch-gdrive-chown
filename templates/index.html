@@ -1,0 +1,32 @@
+<html>
+<head>
+    <title>FCCH GDrive Chown</title>
+    <script src="static/app.js"></script>
+</head>
+<body>
+    <div>
+        <button onClick="onClickTest()">Test</button> |
+        {% if not logged_in %}
+        <button onClick="onClickLogin()">Login</button>
+        {% else %}
+        <button onClick="onClickLogout()">Logout</button> |
+        <button onClick="onClickGetDriveFileList()">Get Drive File List</button> |
+        <button onClick="onClickCalcFilesToChangeOwnership()">Calculate Files To Change Ownership</button> |
+        <button onClick="onClickChangeOwnership()">Change Ownership</button>
+        {% endif %}
+    </div>
+    <div id="results">
+        {% with messages = get_flashed_messages() %}
+            {% if messages %}
+              <ul class=flashes>
+                  {% for message in messages %}
+                      <li>{{ message }}</li>
+                  {% endfor %}
+              </ul>
+            {% else %}
+                Welcome.
+            {% endif %}
+        {% endwith %}
+    </div>
+</body>
+</html>
