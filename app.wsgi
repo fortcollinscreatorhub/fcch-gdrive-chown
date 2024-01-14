@@ -46,8 +46,8 @@ CHOWN_YES = 2
 CHOWN_DONE = 3
 
 PENDING_OWNER_NO = 0
-PENDING_OWNER_YES = 0
-PENDING_OWNER_DONE = 0
+PENDING_OWNER_YES = 1
+PENDING_OWNER_DONE = 2
 
 def url_for(path):
   return script_name + '/' + path
@@ -207,7 +207,6 @@ def get_drive_file_list():
     raise_if_unauth()
 
     page_token = flask.request.args.get('page_token', None)
-
     if page_token is None:
       flask.session['count'] = str(0)
     count = int(flask.session['count'])
@@ -432,6 +431,12 @@ def get_owner_pend():
 def chown_files():
   try:
     raise_if_unauth()
+
+    init = flask.request.args.get('init', 'true')
+    if init == 'true':
+      flask.session['count'] = str(0)
+    count = int(flask.session['count'])
+
     # Load credentials from the session.
     credentials = google.oauth2.credentials.Credentials(
         **flask.session['credentials'])
@@ -453,28 +458,27 @@ def chown_files():
     drive_service = googleapiclient.discovery.build(
       API_SERVICE_NAME, API_VERSION, credentials=credentials)
 
-    # FIXME: Remove this after testing GSuite accounts:
-    if True:
-      file_id = '1CRWbNK53rbF_r3bhwOYwwgkt87LwF1dfGse4HsUFqT0'
-      drive_service.permissions().insert(fileId=file_id, body=permission).execute()
-      msg = f'File {file_id} transferred'
+    dbres = dbcur.execute(
+      "SELECT id, title FROM files WHERE user=? AND reachable=? AND doChown=?",
+      (flask.session['email'], REACHABLE_YES, CHOWN_YES))
+    files = dbres.fetchall()
 
-    # FIXME: Enable after testing GSuite accounts:
-    # FIXME: page this...
-    if False:
-      dbres = dbcur.execute(
-        "SELECT * FROM files WHERE user=? AND reachable=? AND doChown=?",
-        (flask.session['email'], REACHABLE_YES, CHOWN_YES))
-      files = dbres.fetchall()
+    msg = ''
+    file_count = min(len(files), 10)
+    more = file_count < len(files)
+    for file in files[:file_count]:
+      file_id = file[0]
+      file_title = file[1]
+      drive_service.permissions().insert(fileId=file_id, body=permission, sendNotificationEmails=False).execute()
+      dbcur.execute("UPDATE files SET doChown=? WHERE user=? AND id=?",
+        (CHOWN_DONE, flask.session['email'], file_id))
+      msg += f'{file_id} ({file_title})\n'
 
-      msg = 'Ownership transfered for:\n'
-      for file in files:
-        file_id = file['id']
-        file_title = file['title']
-        drive_service.permissions().insert(fileId=file_id, body=permission, **insert_args).execute()
-        dbcur.execute("UPDATE files SET doChown=? WHERE user=? AND id=?",
-          (CHOWN_DONE, flask.session['email'], file_id))
-        msg += f'{file_id} ({file_title})\n'
+    count += file_count
+    flask.session['count'] = str(count)
+
+    msg = f'Ownership transfered for {file_count} files (total now {count}) (more? {more}):\n' + msg
+    data = {'more': more}
 
     dbcon.commit()
 
@@ -485,8 +489,9 @@ def chown_files():
   except Exception as e:
     dbcon.rollback()
     msg = exc_to_text(e)
+    data = None
 
-  return js_response(msg)
+  return js_response(msg, data)
 
 @app.route('/show_pending_ownership')
 def show_pending_ownership():
@@ -495,8 +500,8 @@ def show_pending_ownership():
 
     (dbcon, dbcur) = get_db()
     dbres = dbcur.execute(
-      "SELECT * FROM files WHERE user=? AND reachable=? AND pendingOwner=1",
-      (flask.session['email'], REACHABLE_YES))
+      "SELECT * FROM files WHERE user=? AND reachable=? AND pendingOwner=?",
+      (flask.session['email'], REACHABLE_YES, PENDING_OWNER_YES))
     files = dbres.fetchall()
 
     msg = ''
@@ -536,15 +541,13 @@ def accept_pending_ownership():
       API_SERVICE_NAME, API_VERSION, credentials=credentials)
 
     dbres = dbcur.execute(
-      "SELECT * FROM files WHERE user=? AND reachable=? AND pendingOwner=?",
+      "SELECT id, title FROM files WHERE user=? AND reachable=? AND pendingOwner=?",
       (flask.session['email'], REACHABLE_YES, PENDING_OWNER_YES))
     files = dbres.fetchall()
 
     # FIXME: page this...
     msg = 'Ownership accepted for:\n'
-    for file in files:
-      file_id = file['id']
-      file_title = file['title']
+    for file_id, file_title in files:
       drive_service.permissions().insert(fileId=file_id, body=permission).execute()
       dbcur.execute("UPDATE files SET pendingOwner=? WHERE user=? AND id=?",
         (PENDING_OWNER_DONE, flask.session['email'], file_id))

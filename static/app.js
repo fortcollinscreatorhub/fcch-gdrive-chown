@@ -73,8 +73,19 @@ function onClickShowFilesToChangeOwnership() {
     invokeAndShowResults('show_files_to_change_ownership');
 }
 
-function onClickChangeOwnership() {
-    invokeAndShowResults('chown_files');
+async function onClickChangeOwnership() {
+    init = 'true';
+    do {
+        url = 'chown_files?init=' + init;
+        init = 'false';
+        data = await invokeAndShowResults(url);
+        more = false;
+        if (data !== undefined) {
+            if (data.hasOwnProperty('more')) {
+                more = data.more;
+            }
+        }
+    } while (more === true);
 }
 
 function onClickShowPendingOwnership() {
