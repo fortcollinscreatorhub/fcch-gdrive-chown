@@ -19,10 +19,6 @@ target_owner_email_by_domain = {
   'fortcollinscreatorhub.org': ('stephen.warren@fortcollinscreatorhub.org', False),
 }
 
-# Temp for testing:
-file_in_in_fcch_public_wfshared='16sBGoazshM5qrrMMLiHEgFfIHriMeAyDZsnHH0NmZlY'
-file_in_in_fcch_public_fcch='FIXME'
-
 os.environ['OAUTHLIB_RELAX_TOKEN_SCOPE'] = '1'
 
 # This variable specifies the name of a file that contains the OAuth 2.0
@@ -446,12 +442,9 @@ def chown_files():
         'value': target_owner,
     }
     if do_pending:
-        insert_args = {}
         permission['role'] = 'writer'
         permission['pendingOwner'] = True
     else:
-        # FIXME: This branch (GSuite accounts) isn't tested
-        insert_args = {'transferOwnership': True}
         permission['role'] = 'owner'
         permission['transferOwnership'] = True
 
@@ -462,8 +455,8 @@ def chown_files():
 
     # FIXME: Remove this after testing GSuite accounts:
     if True:
-      file_id = file_in_in_fcch_public_wfshared
-      drive_service.permissions().insert(fileId=file_id, body=permission, **insert_args).execute()
+      file_id = '1CRWbNK53rbF_r3bhwOYwwgkt87LwF1dfGse4HsUFqT0'
+      drive_service.permissions().insert(fileId=file_id, body=permission).execute()
       msg = f'File {file_id} transferred'
 
     # FIXME: Enable after testing GSuite accounts:
