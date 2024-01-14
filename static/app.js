@@ -65,9 +65,14 @@ function onClickCalcFilesToChangeOwnership() {
     invokeAndShowResults('calc_files_to_change_ownership');
 }
 
+function onClickShowFilesNeedChangeOwnership() {
+    invokeAndShowResults('show_files_need_change_ownership');
+}
+
 function onClickShowFilesToChangeOwnership() {
     invokeAndShowResults('show_files_to_change_ownership');
 }
 
 function onClickChangeOwnership() {
+    invokeAndShowResults('chown_files');
 }

@@ -3,6 +3,10 @@
 
 app_dir='/var/www/fcch-gdrive-chown'
 fcch_creator_hub_public_folder='0BztS2sNeBoIFYXI0bVlncWswZmc'
+target_owner_email_by_domain={
+  'gmail.com': 'stephen.r.warren@gmail.com',
+  'fortcollinscreatorhub.org': 'stephen.r.warren@gmail.com'
+}
 
 import google.oauth2.credentials
 import google_auth_oauthlib.flow
@@ -27,16 +31,16 @@ SCOPES = [
   'https://www.googleapis.com/auth/drive',
 ]
 API_SERVICE_NAME = 'drive'
-API_VERSION = 'v2'
+API_VERSION = 'v3'
 
 REACHABLE_UNKNOWN = 0
 REACHABLE_NO = 1
 REACHABLE_YES = 2
 
-DISOWNED_UNKNOWN = 0
-DISOWNED_NO = 1
-DISOWNED_YES = 2
-DISOWNED_DONE = 3
+CHOWN_UNKNOWN = 0
+CHOWN_NO = 1
+CHOWN_YES = 2
+CHOWN_DONE = 3
 
 def url_for(path):
   return script_name + '/' + path
@@ -84,7 +88,7 @@ def get_db():
     if dbcon is None:
       dbcon = flask.g._dbcon = sqlite3.connect(app_dir + "/var/db.db")
       dbcur = dbcon.cursor()
-      dbcur.execute("CREATE TABLE IF NOT EXISTS files (user TEXT, id TEXT, title TEXT, isFolder INT, owner TEXT, reachable INT, disowned INT)")
+      dbcur.execute("CREATE TABLE IF NOT EXISTS files (user TEXT, id TEXT, title TEXT, isFolder INT, owner TEXT, reachable INT, needChown INT, doChown INT)")
       dbcur.execute("CREATE TABLE IF NOT EXISTS fileParents (user TEXT, id TEXT, parent TEXT)")
     return (dbcon, dbcur)
 
@@ -129,7 +133,7 @@ def login():
   except Exception as e:
     msg = 'ERROR: ' + exc_to_html(e)
     flask.flash(msg)
-    return flask.redirect(url_for('/'))
+    return flask.redirect(url_for(''))
 
 @app.route('/oauth2callback')
 def oauth2callback():
@@ -162,7 +166,7 @@ def oauth2callback():
     msg = 'ERROR: ' + exc_to_html(e)
 
   flask.flash(msg)
-  return flask.redirect(url_for('/'))
+  return flask.redirect(url_for(''))
 
 @app.route('/logout')
 def logout():
@@ -184,7 +188,7 @@ def logout():
     del flask.session['credentials']
 
   flask.flash(msg)
-  return flask.redirect(url_for('/'))
+  return flask.redirect(url_for(''))
 
 def raise_if_unauth():
   if 'credentials' not in flask.session:
@@ -210,8 +214,8 @@ def get_drive_file_list():
     drive_service = googleapiclient.discovery.build(
       API_SERVICE_NAME, API_VERSION, credentials=credentials)
 
-    response = drive_service.files().list(pageToken=page_token).execute()
-    files = response.get("items", [])
+    response = drive_service.files().list(fields="nextPageToken, files(id, name, mimeType, owners, parents)", pageToken=page_token).execute()
+    files = response.get("files", [])
 
     if page_token is None:
       dbcur.execute("DELETE FROM files WHERE user=?",
@@ -220,19 +224,20 @@ def get_drive_file_list():
         (flask.session['email'], ))
     for file in files:
       file_id = file['id']
-      file_title = file['title']
+      file_title = file['name']
       file_type = file['mimeType']
       file_is_folder = file_type == 'application/vnd.google-apps.folder'
       file_owner = file['owners'][0]['emailAddress']
       file_reachable = REACHABLE_UNKNOWN
-      file_disowned = DISOWNED_UNKNOWN
-      file_parents = file['parents']
+      file_need_chown = CHOWN_UNKNOWN
+      file_do_chown = CHOWN_UNKNOWN
+      file_parents = file.get('parents', [])
 
-      dbcur.execute("INSERT INTO files (user, id, title, isFolder, owner, reachable, disowned) VALUES (?, ?, ?, ?, ?, ?, ?)",
-        (flask.session['email'], file_id, file_title, file_is_folder, file_owner, file_reachable, file_disowned))
+      dbcur.execute("INSERT INTO files (user, id, title, isFolder, owner, reachable, needChown, doChown) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        (flask.session['email'], file_id, file_title, file_is_folder, file_owner, file_reachable, file_need_chown, file_do_chown))
       for file_parent in file_parents:
         dbcur.execute("INSERT INTO fileParents (user, id, parent) VALUES (?, ?, ?)",
-          (flask.session['email'], file_id, file_parent['id']))
+          (flask.session['email'], file_id, file_parent))
 
     fetched = len(files)
     count += fetched
@@ -267,7 +272,7 @@ def show_drive_file_list():
 
     (dbcon, dbcur) = get_db()
     dbres = dbcur.execute(
-      "SELECT user, id, title, isFolder, owner, reachable, disowned FROM files WHERE user=?",
+      "SELECT user, id, title, isFolder, owner, reachable, needChown, doChown FROM files WHERE user=?",
       (flask.session['email'], ))
     files = dbres.fetchall()
     dbres = dbcur.execute(
@@ -316,10 +321,12 @@ def calc_files_to_change_ownership():
       child_file_ids_of_parent[file_parent] = child_file_ids
 
     reachable_files = []
-    disown_yes_files = []
+    need_chown_files = []
+    do_chown_files = []
     parents_to_do = [fcch_creator_hub_public_folder]
     parents_done = {}
 
+    target_owner_emails = target_owner_email_by_domain.values()
     while parents_to_do:
       parent = parents_to_do.pop()
       child_file_ids = child_file_ids_of_parent.get(parent, [])
@@ -329,24 +336,51 @@ def calc_files_to_change_ownership():
           if file_id not in parents_done:
             parents_done[file_id] = True
             parents_to_do.append(file_id)
-        else:
-          reachable_files.append(file_id)
-        if file_owner == flask.session['email']:
-          disown_yes_files.append(file_id)
+        reachable_files.append(file_id)
+        need_chown = file_owner not in target_owner_emails
+        if need_chown:
+          need_chown_files.append(file_id)
+        if (file_owner == flask.session['email']): # and need_chown:
+          do_chown_files.append(file_id)
 
     dbcur.execute("UPDATE files SET reachable=? WHERE user=?",
       (REACHABLE_NO, flask.session['email']))
-
     rows = [(REACHABLE_YES, flask.session['email'], file_id) for file_id in reachable_files]
     dbcur.executemany("UPDATE files SET reachable=? WHERE user=? AND id=?", rows)
 
-    dbcur.execute("UPDATE files SET disowned=? WHERE user=?",
-      (DISOWNED_NO, flask.session['email']))
+    dbcur.execute("UPDATE files SET needChown=? WHERE user=?",
+      (CHOWN_NO, flask.session['email']))
+    rows = [(CHOWN_YES, flask.session['email'], file_id) for file_id in need_chown_files]
+    dbcur.executemany("UPDATE files SET needChown=? WHERE user=? AND id=?", rows)
 
-    rows = [(DISOWNED_YES, flask.session['email'], file_id) for file_id in disown_yes_files]
-    dbcur.executemany("UPDATE files SET disowned=? WHERE user=? AND id=?", rows)
+    dbcur.execute("UPDATE files SET doChown=? WHERE user=?",
+      (CHOWN_NO, flask.session['email']))
+    rows = [(CHOWN_YES, flask.session['email'], file_id) for file_id in do_chown_files]
+    dbcur.executemany("UPDATE files SET doChown=? WHERE user=? AND id=?", rows)
 
     msg = 'Calculation complete'
+
+    dbcon.commit()
+  except Exception as e:
+    dbcon.rollback()
+    msg = exc_to_text(e)
+
+  return js_response(msg)
+
+@app.route('/show_files_need_change_ownership')
+def show_files_need_change_ownership():
+  try:
+    raise_if_unauth()
+
+    (dbcon, dbcur) = get_db()
+    dbres = dbcur.execute(
+      "SELECT user, id, title, isFolder, owner, reachable, needChown, doChown FROM files WHERE user=? AND needChown=2",
+      (flask.session['email'], ))
+    files = dbres.fetchall()
+
+    msg = ''
+    for file in files:
+      msg += repr(file) + '\n'
 
     dbcon.commit()
   except Exception as e:
@@ -362,7 +396,7 @@ def show_files_to_change_ownership():
 
     (dbcon, dbcur) = get_db()
     dbres = dbcur.execute(
-      "SELECT user, id, title, isFolder, owner, reachable, disowned FROM files WHERE user=? AND disowned=2",
+      "SELECT user, id, title, isFolder, owner, reachable, needChown, doChown FROM files WHERE user=? AND doChown=2",
       (flask.session['email'], ))
     files = dbres.fetchall()
 
@@ -371,6 +405,46 @@ def show_files_to_change_ownership():
       msg += repr(file) + '\n'
 
     dbcon.commit()
+  except Exception as e:
+    dbcon.rollback()
+    msg = exc_to_text(e)
+
+  return js_response(msg)
+
+file_id_no_perm='1RDNy3A_Kbua-TJd97_wvNvkwdFiKuvq7pfswtbFuIHM'
+file_id_read_perm='1L3pPxiRiuCJCavz2eIv3mnCEMA-dCP3KXTvYgowOd-I'
+file_id_editor_perm='170XgOEopPeUDwjoBmWlNOsfFhej38f6LeiE4ALPLuEs'
+
+@app.route('/chown_files')
+def chown_files():
+  try:
+    raise_if_unauth()
+    # Load credentials from the session.
+    credentials = google.oauth2.credentials.Credentials(
+        **flask.session['credentials'])
+
+    (dbcon, dbcur) = get_db()
+
+    drive_service = googleapiclient.discovery.build(
+      API_SERVICE_NAME, API_VERSION, credentials=credentials)
+
+    file_id = file_id_no_perm
+    permission = {
+        'type': 'user',
+        'role': 'owner',
+        'transferOwnership': True,
+        'emailAddress': target_owner_email,
+    }
+    drive_service.permissions().create(fileId=file_id, body=permission, transferOwnership=True).execute()
+
+    msg = f'File %s transferred' % file_id
+
+    dbcon.commit()
+
+    # Save credentials back to session in case access token was refreshed.
+    # ACTION ITEM: In a production app, you likely want to save these
+    #              credentials in a persistent database instead.
+    flask.session['credentials'] = credentials_to_dict(credentials)
   except Exception as e:
     dbcon.rollback()
     msg = exc_to_text(e)
