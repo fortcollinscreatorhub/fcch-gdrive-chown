@@ -232,6 +232,8 @@ def get_drive_file_list():
       file_id = file['id']
       file_title = file['title']
       file_type = file['mimeType']
+      if file_type == 'application/vnd.google-apps.shortcut':
+        continue
       file_is_folder = file_type == 'application/vnd.google-apps.folder'
       file_owner = file['owners'][0]['emailAddress']
       file_reachable = REACHABLE_UNKNOWN
