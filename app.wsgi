@@ -1,13 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
-app_dir='/var/www/fcch-gdrive-chown'
-fcch_creator_hub_public_folder='0BztS2sNeBoIFYXI0bVlncWswZmc'
-target_owner_email_by_domain={
-  'gmail.com': 'stephen.r.warren@gmail.com',
-  'fortcollinscreatorhub.org': 'stephen.r.warren@gmail.com'
-}
-
 import google.oauth2.credentials
 import google_auth_oauthlib.flow
 import googleapiclient.discovery
@@ -16,6 +9,19 @@ import flask
 import requests
 import sqlite3
 from werkzeug.middleware.proxy_fix import ProxyFix
+
+# Configuration
+app_dir = '/var/www/fcch-gdrive-chown'
+fcch_creator_hub_public_folder = '0BztS2sNeBoIFYXI0bVlncWswZmc'
+target_owner_email_by_domain = {
+  None: ('stephen.r.warren@gmail.com', True),
+  'gmail.com': ('stephen.r.warren@gmail.com', True),
+  'fortcollinscreatorhub.org': ('stephen.warren@fortcollinscreatorhub.org', False),
+}
+
+# Temp for testing:
+file_in_in_fcch_public_wfshared='16sBGoazshM5qrrMMLiHEgFfIHriMeAyDZsnHH0NmZlY'
+file_in_in_fcch_public_fcch='FIXME'
 
 os.environ['OAUTHLIB_RELAX_TOKEN_SCOPE'] = '1'
 
@@ -31,7 +37,8 @@ SCOPES = [
   'https://www.googleapis.com/auth/drive',
 ]
 API_SERVICE_NAME = 'drive'
-API_VERSION = 'v3'
+# v3 API doesn't seem to work for consumer ownership transfers:-(
+API_VERSION = 'v2'
 
 REACHABLE_UNKNOWN = 0
 REACHABLE_NO = 1
@@ -41,6 +48,10 @@ CHOWN_UNKNOWN = 0
 CHOWN_NO = 1
 CHOWN_YES = 2
 CHOWN_DONE = 3
+
+PENDING_OWNER_NO = 0
+PENDING_OWNER_YES = 0
+PENDING_OWNER_DONE = 0
 
 def url_for(path):
   return script_name + '/' + path
@@ -88,7 +99,7 @@ def get_db():
     if dbcon is None:
       dbcon = flask.g._dbcon = sqlite3.connect(app_dir + "/var/db.db")
       dbcur = dbcon.cursor()
-      dbcur.execute("CREATE TABLE IF NOT EXISTS files (user TEXT, id TEXT, title TEXT, isFolder INT, owner TEXT, reachable INT, needChown INT, doChown INT)")
+      dbcur.execute("CREATE TABLE IF NOT EXISTS files (user TEXT, id TEXT, title TEXT, isFolder INT, owner TEXT, reachable INT, needChown INT, doChown INT, pendingOwner INT)")
       dbcur.execute("CREATE TABLE IF NOT EXISTS fileParents (user TEXT, id TEXT, parent TEXT)")
     return (dbcon, dbcur)
 
@@ -214,8 +225,8 @@ def get_drive_file_list():
     drive_service = googleapiclient.discovery.build(
       API_SERVICE_NAME, API_VERSION, credentials=credentials)
 
-    response = drive_service.files().list(fields="nextPageToken, files(id, name, mimeType, owners, parents)", pageToken=page_token).execute()
-    files = response.get("files", [])
+    response = drive_service.files().list(pageToken=page_token).execute()
+    files = response.get("items", [])
 
     if page_token is None:
       dbcur.execute("DELETE FROM files WHERE user=?",
@@ -224,20 +235,21 @@ def get_drive_file_list():
         (flask.session['email'], ))
     for file in files:
       file_id = file['id']
-      file_title = file['name']
+      file_title = file['title']
       file_type = file['mimeType']
       file_is_folder = file_type == 'application/vnd.google-apps.folder'
       file_owner = file['owners'][0]['emailAddress']
       file_reachable = REACHABLE_UNKNOWN
       file_need_chown = CHOWN_UNKNOWN
       file_do_chown = CHOWN_UNKNOWN
+      file_pending_owner = file['userPermission']['pendingOwner']
       file_parents = file.get('parents', [])
 
-      dbcur.execute("INSERT INTO files (user, id, title, isFolder, owner, reachable, needChown, doChown) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-        (flask.session['email'], file_id, file_title, file_is_folder, file_owner, file_reachable, file_need_chown, file_do_chown))
+      dbcur.execute("INSERT INTO files (user, id, title, isFolder, owner, reachable, needChown, doChown, pendingOwner) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (flask.session['email'], file_id, file_title, file_is_folder, file_owner, file_reachable, file_need_chown, file_do_chown, file_pending_owner))
       for file_parent in file_parents:
         dbcur.execute("INSERT INTO fileParents (user, id, parent) VALUES (?, ?, ?)",
-          (flask.session['email'], file_id, file_parent))
+          (flask.session['email'], file_id, file_parent['id']))
 
     fetched = len(files)
     count += fetched
@@ -272,7 +284,7 @@ def show_drive_file_list():
 
     (dbcon, dbcur) = get_db()
     dbres = dbcur.execute(
-      "SELECT user, id, title, isFolder, owner, reachable, needChown, doChown FROM files WHERE user=?",
+      "SELECT * FROM files WHERE user=?",
       (flask.session['email'], ))
     files = dbres.fetchall()
     dbres = dbcur.execute(
@@ -326,7 +338,7 @@ def calc_files_to_change_ownership():
     parents_to_do = [fcch_creator_hub_public_folder]
     parents_done = {}
 
-    target_owner_emails = target_owner_email_by_domain.values()
+    target_owner_emails = [email for (email, use_pending) in target_owner_email_by_domain.values()]
     while parents_to_do:
       parent = parents_to_do.pop()
       child_file_ids = child_file_ids_of_parent.get(parent, [])
@@ -340,7 +352,7 @@ def calc_files_to_change_ownership():
         need_chown = file_owner not in target_owner_emails
         if need_chown:
           need_chown_files.append(file_id)
-        if (file_owner == flask.session['email']): # and need_chown:
+        if (file_owner == flask.session['email']) and need_chown:
           do_chown_files.append(file_id)
 
     dbcur.execute("UPDATE files SET reachable=? WHERE user=?",
@@ -374,11 +386,12 @@ def show_files_need_change_ownership():
 
     (dbcon, dbcur) = get_db()
     dbres = dbcur.execute(
-      "SELECT user, id, title, isFolder, owner, reachable, needChown, doChown FROM files WHERE user=? AND needChown=2",
+      "SELECT * FROM files WHERE user=? AND needChown=2",
       (flask.session['email'], ))
     files = dbres.fetchall()
 
     msg = ''
+    msg += 'Files:\n'
     for file in files:
       msg += repr(file) + '\n'
 
@@ -396,11 +409,12 @@ def show_files_to_change_ownership():
 
     (dbcon, dbcur) = get_db()
     dbres = dbcur.execute(
-      "SELECT user, id, title, isFolder, owner, reachable, needChown, doChown FROM files WHERE user=? AND doChown=2",
+      "SELECT * FROM files WHERE user=? AND doChown=2",
       (flask.session['email'], ))
     files = dbres.fetchall()
 
     msg = ''
+    msg += 'Files:\n'
     for file in files:
       msg += repr(file) + '\n'
 
@@ -411,9 +425,12 @@ def show_files_to_change_ownership():
 
   return js_response(msg)
 
-file_id_no_perm='1RDNy3A_Kbua-TJd97_wvNvkwdFiKuvq7pfswtbFuIHM'
-file_id_read_perm='1L3pPxiRiuCJCavz2eIv3mnCEMA-dCP3KXTvYgowOd-I'
-file_id_editor_perm='170XgOEopPeUDwjoBmWlNOsfFhej38f6LeiE4ALPLuEs'
+def get_owner_pend():
+  cur_domain = flask.session['email'].split('@')[1]
+  if cur_domain not in target_owner_email_by_domain:
+    cur_domain = None
+  target_owner, do_pending = target_owner_email_by_domain[cur_domain]
+  return target_owner, do_pending
 
 @app.route('/chown_files')
 def chown_files():
@@ -423,21 +440,122 @@ def chown_files():
     credentials = google.oauth2.credentials.Credentials(
         **flask.session['credentials'])
 
+    target_owner, do_pending = get_owner_pend()
+    permission = {
+        'type': 'user',
+        'value': target_owner,
+    }
+    if do_pending:
+        insert_args = {}
+        permission['role'] = 'writer'
+        permission['pendingOwner'] = True
+    else:
+        # FIXME: This branch (GSuite accounts) isn't tested
+        insert_args = {'transferOwnership': True}
+        permission['role'] = 'owner'
+        permission['transferOwnership'] = True
+
     (dbcon, dbcur) = get_db()
 
     drive_service = googleapiclient.discovery.build(
       API_SERVICE_NAME, API_VERSION, credentials=credentials)
 
-    file_id = file_id_no_perm
+    # FIXME: Remove this after testing GSuite accounts:
+    if True:
+      file_id = file_in_in_fcch_public_wfshared
+      drive_service.permissions().insert(fileId=file_id, body=permission, **insert_args).execute()
+      msg = f'File {file_id} transferred'
+
+    # FIXME: Enable after testing GSuite accounts:
+    # FIXME: page this...
+    if False:
+      dbres = dbcur.execute(
+        "SELECT * FROM files WHERE user=? AND reachable=? AND doChown=?",
+        (flask.session['email'], REACHABLE_YES, CHOWN_YES))
+      files = dbres.fetchall()
+
+      msg = 'Ownership transfered for:\n'
+      for file in files:
+        file_id = file['id']
+        file_title = file['title']
+        drive_service.permissions().insert(fileId=file_id, body=permission, **insert_args).execute()
+        dbcur.execute("UPDATE files SET doChown=? WHERE user=? AND id=?",
+          (CHOWN_DONE, flask.session['email'], file_id))
+        msg += f'{file_id} ({file_title})\n'
+
+    dbcon.commit()
+
+    # Save credentials back to session in case access token was refreshed.
+    # ACTION ITEM: In a production app, you likely want to save these
+    #              credentials in a persistent database instead.
+    flask.session['credentials'] = credentials_to_dict(credentials)
+  except Exception as e:
+    dbcon.rollback()
+    msg = exc_to_text(e)
+
+  return js_response(msg)
+
+@app.route('/show_pending_ownership')
+def show_pending_ownership():
+  try:
+    raise_if_unauth()
+
+    (dbcon, dbcur) = get_db()
+    dbres = dbcur.execute(
+      "SELECT * FROM files WHERE user=? AND reachable=? AND pendingOwner=1",
+      (flask.session['email'], REACHABLE_YES))
+    files = dbres.fetchall()
+
+    msg = ''
+    msg += 'Files:\n'
+    for file in files:
+      msg += repr(file) + '\n'
+
+    dbcon.commit()
+  except Exception as e:
+    dbcon.rollback()
+    msg = exc_to_text(e)
+
+  return js_response(msg)
+
+@app.route('/accept_pending_ownership')
+def accept_pending_ownership():
+  try:
+    raise_if_unauth()
+    # Load credentials from the session.
+    credentials = google.oauth2.credentials.Credentials(
+        **flask.session['credentials'])
+
+    target_owner, do_pending = get_owner_pend()
+    if not do_pending:
+      msg = 'Not needed for GSuite accounts'
+      return js_response(msg)
     permission = {
         'type': 'user',
+        'value': target_owner,
         'role': 'owner',
         'transferOwnership': True,
-        'emailAddress': target_owner_email,
     }
-    drive_service.permissions().create(fileId=file_id, body=permission, transferOwnership=True).execute()
 
-    msg = f'File %s transferred' % file_id
+    (dbcon, dbcur) = get_db()
+
+    drive_service = googleapiclient.discovery.build(
+      API_SERVICE_NAME, API_VERSION, credentials=credentials)
+
+    dbres = dbcur.execute(
+      "SELECT * FROM files WHERE user=? AND reachable=? AND pendingOwner=?",
+      (flask.session['email'], REACHABLE_YES, PENDING_OWNER_YES))
+    files = dbres.fetchall()
+
+    # FIXME: page this...
+    msg = 'Ownership accepted for:\n'
+    for file in files:
+      file_id = file['id']
+      file_title = file['title']
+      drive_service.permissions().insert(fileId=file_id, body=permission).execute()
+      dbcur.execute("UPDATE files SET pendingOwner=? WHERE user=? AND id=?",
+        (PENDING_OWNER_DONE, flask.session['email'], file_id))
+      msg += f'{file_id} ({file_title})\n'
 
     dbcon.commit()
 

@@ -76,3 +76,11 @@ function onClickShowFilesToChangeOwnership() {
 function onClickChangeOwnership() {
     invokeAndShowResults('chown_files');
 }
+
+function onClickShowPendingOwnership() {
+    invokeAndShowResults('show_pending_ownership')
+}
+
+function onClickAcceptPendingOwnership() {
+    invokeAndShowResults('accept_pending_ownership')
+}
