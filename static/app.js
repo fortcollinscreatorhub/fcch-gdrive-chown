@@ -28,10 +28,6 @@ async function invokeAndShowResults(url) {
     }
 }
 
-function onClickTest() {
-    invokeAndShowResults('test');
-}
-
 function onClickLogin() {
     window.location = 'login';
 }
@@ -41,6 +37,7 @@ function onClickLogout() {
 }
 
 async function onClickGetDriveFileList() {
+    showResults("Running...");
     page_token = undefined;
     do {
         url = 'get_drive_file_list'
@@ -58,22 +55,27 @@ async function onClickGetDriveFileList() {
 }
 
 function onClickShowDriveFileList() {
+    showResults("Running...");
     invokeAndShowResults('show_drive_file_list');
 }
 
 function onClickCalcFilesToChangeOwnership() {
+    showResults("Running...");
     invokeAndShowResults('calc_files_to_change_ownership');
 }
 
 function onClickShowFilesNeedChangeOwnership() {
+    showResults("Running...");
     invokeAndShowResults('show_files_need_change_ownership');
 }
 
 function onClickShowFilesToChangeOwnership() {
+    showResults("Running...");
     invokeAndShowResults('show_files_to_change_ownership');
 }
 
 async function onClickChangeOwnership() {
+    showResults("Running...");
     init = 'true';
     do {
         url = 'chown_files?init=' + init;
@@ -89,9 +91,11 @@ async function onClickChangeOwnership() {
 }
 
 function onClickShowPendingOwnership() {
+    showResults("Running...");
     invokeAndShowResults('show_pending_ownership')
 }
 
 function onClickAcceptPendingOwnership() {
+    showResults("Running...");
     invokeAndShowResults('accept_pending_ownership')
 }
