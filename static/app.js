@@ -95,7 +95,18 @@ function onClickShowPendingOwnership() {
     invokeAndShowResults('show_pending_ownership')
 }
 
-function onClickAcceptPendingOwnership() {
+async function onClickAcceptPendingOwnership() {
     showResults("Running...");
-    invokeAndShowResults('accept_pending_ownership')
+    init = 'true';
+    do {
+        url = 'accept_pending_ownership?init=' + init;
+        init = 'false';
+        data = await invokeAndShowResults(url);
+        more = false;
+        if (data !== undefined) {
+            if (data.hasOwnProperty('more')) {
+                more = data.more;
+            }
+        }
+    } while (more === true);
 }

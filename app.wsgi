@@ -468,9 +468,7 @@ def chown_files():
     msg = ''
     file_count = min(len(files), 10)
     more = file_count < len(files)
-    for file in files[:file_count]:
-      file_id = file[0]
-      file_title = file[1]
+    for file_id, file_title in files[:file_count]:
       drive_service.permissions().insert(fileId=file_id, body=permission, sendNotificationEmails=False).execute()
       dbcur.execute("UPDATE files SET doChown=? WHERE user=? AND id=?",
         (CHOWN_DONE, flask.session['email'], file_id))
@@ -479,7 +477,11 @@ def chown_files():
     count += file_count
     flask.session['count'] = str(count)
 
-    msg = f'Ownership transfered for {file_count} files (total now {count}) (more? {more}):\n' + msg
+    if more:
+      cont = 'CONTINUING'
+    else:
+      cont = 'DONE'
+    msg = f'Ownership transfered for {file_count} files (total now {count}) ({cont}):\n' + msg
     data = {'more': more}
 
     dbcon.commit()
@@ -522,6 +524,12 @@ def show_pending_ownership():
 def accept_pending_ownership():
   try:
     raise_if_unauth()
+
+    init = flask.request.args.get('init', 'true')
+    if init == 'true':
+      flask.session['count'] = str(0)
+    count = int(flask.session['count'])
+
     # Load credentials from the session.
     credentials = google.oauth2.credentials.Credentials(
         **flask.session['credentials'])
@@ -547,13 +555,24 @@ def accept_pending_ownership():
       (flask.session['email'], REACHABLE_YES, PENDING_OWNER_YES))
     files = dbres.fetchall()
 
-    # FIXME: page this...
-    msg = 'Ownership accepted for:\n'
-    for file_id, file_title in files:
+    msg = ''
+    file_count = min(len(files), 10)
+    more = file_count < len(files)
+    for file_id, file_title in files[:file_count]:
       drive_service.permissions().insert(fileId=file_id, body=permission).execute()
       dbcur.execute("UPDATE files SET pendingOwner=? WHERE user=? AND id=?",
         (PENDING_OWNER_DONE, flask.session['email'], file_id))
       msg += f'{file_id} ({file_title})\n'
+
+    count += file_count
+    flask.session['count'] = str(count)
+
+    if more:
+      cont = 'CONTINUING'
+    else:
+      cont = 'DONE'
+    msg = f'Ownership accepted for {file_count} files (total now {count}) ({cont}):\n' + msg
+    data = {'more': more}
 
     dbcon.commit()
 
