@@ -584,7 +584,7 @@ def accept_pending_ownership():
     dbcon.rollback()
     msg = exc_to_text(e)
 
-  return js_response(msg)
+  return js_response(msg, data)
 
 def application(environ, start_response):
   global oauth2callback_uri
