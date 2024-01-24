@@ -90,6 +90,10 @@ def exc_to_html(e):
   # FIXME: HTML-escape the lines...
   return 'ERROR:<br/>' + '<br/>'.join(es)
 
+def batch_callback(request_id, response, exception):
+  if exception:
+    raise exception
+
 def get_db():
     dbcon = getattr(flask.g, '_dbcon', None)
     if dbcon is None:
@@ -466,13 +470,15 @@ def chown_files():
     files = dbres.fetchall()
 
     msg = ''
-    file_count = min(len(files), 10)
+    file_count = min(len(files), 25)
     more = file_count < len(files)
+    batch = drive_service.new_batch_http_request(callback=batch_callback)
     for file_id, file_title in files[:file_count]:
-      drive_service.permissions().insert(fileId=file_id, body=permission, sendNotificationEmails=False).execute()
+      batch.add(drive_service.permissions().insert(fileId=file_id, body=permission, sendNotificationEmails=False))
       dbcur.execute("UPDATE files SET doChown=? WHERE user=? AND id=?",
         (CHOWN_DONE, flask.session['email'], file_id))
       msg += f'{file_id} ({file_title})\n'
+    batch.execute()
 
     count += file_count
     flask.session['count'] = str(count)
@@ -556,13 +562,15 @@ def accept_pending_ownership():
     files = dbres.fetchall()
 
     msg = ''
-    file_count = min(len(files), 10)
+    file_count = min(len(files), 25)
     more = file_count < len(files)
+    batch = drive_service.new_batch_http_request(callback=batch_callback)
     for file_id, file_title in files[:file_count]:
-      drive_service.permissions().insert(fileId=file_id, body=permission).execute()
+      batch.add(drive_service.permissions().insert(fileId=file_id, body=permission))
       dbcur.execute("UPDATE files SET pendingOwner=? WHERE user=? AND id=?",
         (PENDING_OWNER_DONE, flask.session['email'], file_id))
       msg += f'{file_id} ({file_title})\n'
+    batch.execute()
 
     count += file_count
     flask.session['count'] = str(count)
