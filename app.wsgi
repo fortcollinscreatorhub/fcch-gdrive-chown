@@ -119,7 +119,7 @@ def get_db():
     if dbcon is None:
       dbcon = flask.g._dbcon = sqlite3.connect(app_dir + "/var/db.db")
       dbcur = dbcon.cursor()
-      dbcur.execute("CREATE TABLE IF NOT EXISTS files (user TEXT, id TEXT, title TEXT, isFolder INT, owner TEXT, reachable INT, needChown INT, doChown INT, pendingOwner INT)")
+      dbcur.execute("CREATE TABLE IF NOT EXISTS files (user TEXT, id TEXT, title TEXT, isFolder INT, owner TEXT, reachable INT, needChown INT, doChown INT, pendingOwner INT, alternateLink TEXT)")
       dbcur.execute("CREATE TABLE IF NOT EXISTS fileParents (user TEXT, id TEXT, parent TEXT)")
     return (dbcon, dbcur)
 
@@ -265,9 +265,10 @@ def get_drive_file_list():
       file_do_chown = CHOWN_UNKNOWN
       file_pending_owner = file['userPermission']['pendingOwner']
       file_parents = file.get('parents', [])
+      file_alt_link = file['alternateLink']
 
-      dbcur.execute("INSERT INTO files (user, id, title, isFolder, owner, reachable, needChown, doChown, pendingOwner) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        (flask.session['email'], file_id, file_title, file_is_folder, file_owner, file_reachable, file_need_chown, file_do_chown, file_pending_owner))
+      dbcur.execute("INSERT INTO files (user, id, title, isFolder, owner, reachable, needChown, doChown, pendingOwner, alternateLink) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (flask.session['email'], file_id, file_title, file_is_folder, file_owner, file_reachable, file_need_chown, file_do_chown, file_pending_owner, file_alt_link))
       for file_parent in file_parents:
         dbcur.execute("INSERT INTO fileParents (user, id, parent) VALUES (?, ?, ?)",
           (flask.session['email'], file_id, file_parent['id']))
