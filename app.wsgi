@@ -408,31 +408,8 @@ def show_files_need_change_ownership():
 
     (dbcon, dbcur) = get_db()
     dbres = dbcur.execute(
-      "SELECT * FROM files WHERE user=? AND needChown=2",
-      (flask.session['email'], ))
-    files = dbres.fetchall()
-
-    msg = ''
-    msg += 'Files:\n'
-    for file in files:
-      msg += repr(file) + '\n'
-
-    dbcon.commit()
-  except Exception as e:
-    dbcon.rollback()
-    msg = exc_to_text(e)
-
-  return js_response(msg)
-
-@app.route('/show_files_to_change_ownership')
-def show_files_to_change_ownership():
-  try:
-    raise_if_unauth()
-
-    (dbcon, dbcur) = get_db()
-    dbres = dbcur.execute(
-      "SELECT * FROM files WHERE user=? AND doChown=2",
-      (flask.session['email'], ))
+      "SELECT * FROM files WHERE user=? AND needChown=?",
+      (flask.session['email'], CHOWN_YES))
     files = dbres.fetchall()
 
     msg = ''
@@ -453,6 +430,31 @@ def get_owner_pend():
     cur_domain = None
   target_owner, do_pending = target_owner_email_by_domain[cur_domain]
   return target_owner, do_pending
+
+@app.route('/show_files_to_change_ownership')
+def show_files_to_change_ownership():
+  try:
+    raise_if_unauth()
+
+    (dbcon, dbcur) = get_db()
+
+    target_owner, do_pending = get_owner_pend()
+    dbres = dbcur.execute(
+      "SELECT * FROM files WHERE (user=? AND doChown=?) OR (user=? AND owner=? AND needChown=?)",
+      (flask.session['email'], CHOWN_YES, target_owner, flask.session['email'], CHOWN_YES))
+    files = dbres.fetchall()
+
+    msg = ''
+    msg += 'Files:\n'
+    for file in files:
+      msg += repr(file) + '\n'
+
+    dbcon.commit()
+  except Exception as e:
+    dbcon.rollback()
+    msg = exc_to_text(e)
+
+  return js_response(msg)
 
 @app.route('/chown_files')
 def chown_files():
@@ -486,18 +488,18 @@ def chown_files():
       API_SERVICE_NAME, API_VERSION, credentials=credentials)
 
     dbres = dbcur.execute(
-      "SELECT id, title FROM files WHERE user=? AND reachable=? AND doChown=?",
-      (flask.session['email'], REACHABLE_YES, CHOWN_YES))
+      "SELECT user, id, title FROM files WHERE (user=? AND doChown=?) OR (user=? AND owner=? AND needChown=?)",
+      (flask.session['email'], CHOWN_YES, target_owner, flask.session['email'], CHOWN_YES))
     files = dbres.fetchall()
 
     msg = ''
     file_count = min(len(files), 25)
     more = file_count < len(files)
     batch = drive_service.new_batch_http_request(callback=batch_callback)
-    for file_id, file_title in files[:file_count]:
+    for user, file_id, file_title in files[:file_count]:
       batch.add(drive_service.permissions().insert(fileId=file_id, body=permission, sendNotificationEmails=False))
-      dbcur.execute("UPDATE files SET doChown=? WHERE user=? AND id=?",
-        (CHOWN_DONE, flask.session['email'], file_id))
+      dbcur.execute("UPDATE files SET needChown=?, doChown=?, owner=? WHERE user=? AND id=?",
+        (CHOWN_DONE, CHOWN_DONE, target_owner, user, file_id))
       msg += f'{file_id} ({file_title})\n'
     batch.execute()
 
