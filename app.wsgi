@@ -614,6 +614,7 @@ def accept_pending_ownership():
   except Exception as e:
     dbcon.rollback()
     msg = exc_to_text(e)
+    data = None
 
   return js_response(msg, data)
 
