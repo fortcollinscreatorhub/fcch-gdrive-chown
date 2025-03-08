@@ -21,6 +21,7 @@
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
 
+import google.auth.transport.requests
 import google.oauth2.credentials
 import google_auth_oauthlib.flow
 import googleapiclient.discovery
@@ -76,10 +77,12 @@ def credentials_to_dict(credentials):
   return {
     'token': credentials.token,
     'refresh_token': credentials.refresh_token,
+    'id_token':credentials.id_token,
     'token_uri': credentials.token_uri,
     'client_id': credentials.client_id,
     'client_secret': credentials.client_secret,
-    'scopes': credentials.scopes
+    'scopes': credentials.scopes,
+    'expiry': credentials.expiry,
   }
 
 app = flask.Flask(__name__)
@@ -224,6 +227,24 @@ def logout():
 def raise_if_unauth():
   if 'credentials' not in flask.session:
     raise Exception('Not logged in')
+
+  sess_creds = flask.session['credentials']
+  credentials = google.oauth2.credentials.Credentials(
+    sess_creds['token'],
+    refresh_token=sess_creds['refresh_token'],
+    id_token=sess_creds['id_token'],
+    token_uri=sess_creds['token_uri'],
+    client_id=sess_creds['client_id'],
+    client_secret=sess_creds['client_secret'],
+    scopes=sess_creds['scopes'],
+  )
+  # Google OAuth lib removes TZ info for backwards compatibility.
+  # The expiry time itself is already always in UTC, so this should work OK.
+  credentials.expiry = sess_creds['expiry'].replace(tzinfo=None)
+  if credentials.expired:
+    request = google.auth.transport.requests.Request()
+    credentials.refresh(request)
+    flask.session['credentials'] = credentials_to_dict(credentials)
 
 @app.route('/get_drive_file_list')
 def get_drive_file_list():
